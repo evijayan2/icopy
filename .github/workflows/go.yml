@@ -3,8 +3,13 @@ name: Go
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - '**/RELEASE'
   pull_request:
     branches: [ "main" ]
+    types: [opened, synchronize]
+    paths:
+      - '**/RELEASE'    
 
 jobs:
 
@@ -20,8 +25,6 @@ jobs:
 
     - name: Build
       run: go build -v ./...
-      
-
       
     - name: Create GitHub Release
       uses: pipe-cd/actions-gh-release@v2.6.0

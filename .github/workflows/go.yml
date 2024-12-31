@@ -25,4 +25,6 @@ jobs:
       
     - name: Create GitHub Release
       uses: pipe-cd/actions-gh-release@v2.6.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

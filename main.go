@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"sync"
 	"syscall"
+	"time"
 
 	icopy "github.com/evijayan2/icopy/src"
 	"github.com/rs/zerolog"
@@ -15,6 +17,7 @@ import (
 )
 
 var (
+	scan          = flag.Bool("scan", false, "Scan and generate md5sum files. (true/false)")
 	video         = flag.Bool("video", false, "Read video creation date time metadata. (true/false)")
 	image         = flag.Bool("image", false, "Read image creation date time metadata. (true/false)")
 	remove_source = flag.Bool("removesource", false, "Remove source files after copying. (true/false)")
@@ -60,6 +63,7 @@ func main() {
 	imageFiles := []icopy.FileObject{}
 	erroredFiles := []icopy.ErroredFileObject{}
 	skippedFiles := []icopy.FileObject{}
+	matchedFiles := []icopy.MatchObject{}
 
 	fp := icopy.FileProcessor{
 		Overwrite: *overwrite,
@@ -68,7 +72,18 @@ func main() {
 		DateFmt:   *outdir_fmt,
 	}
 
-	if *video {
+	if *scan {
+		logger.Info().Msg("Scanning and generating md5sum files")
+		var wg sync.WaitGroup
+		stopChan := make(chan struct{})
+
+		wg.Add(1)
+		go showSpinner(stopChan, &wg)
+		icopy.ScanFiles(ctx, *indir, *outdir)
+		matchedFiles = icopy.ValidateMd5sumFiles(ctx, "src", "dst")
+		close(stopChan)
+		wg.Wait()
+	} else if *video {
 		logger.Info().Msgf("Reading video creation time metadata")
 		imageFiles, erroredFiles, skippedFiles = fp.CopyVideoFiles(ctx, *indir, *outdir)
 	} else if *image {
@@ -78,6 +93,7 @@ func main() {
 		error(ctx, "No input specified. Exiting.")
 	}
 
+	PrintM(ctx, "Files matched", matchedFiles)
 	Print(ctx, "Files copied", imageFiles)
 	Print(ctx, "Skipped", skippedFiles)
 	PrintE(ctx, "Errors", erroredFiles)
@@ -89,7 +105,26 @@ func main() {
 		Print(ctx, "Removed files:", removedFiles)
 	}
 
+	os.RemoveAll("./badger")
+
 	fmt.Println("")
+}
+
+func showSpinner(stopChan <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	spinner := []string{"|", "/", "-", "\\"}
+	i := 0
+	for {
+		select {
+		case <-stopChan:
+			fmt.Print("\r\033[K") // Clear the spinner
+			return
+		default:
+			fmt.Printf("\rProcessing... %s", spinner[i])
+			i = (i + 1) % len(spinner)
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 func error(ctx context.Context, msg string) {
@@ -106,8 +141,21 @@ func Print(ctx context.Context, msg string, files []icopy.FileObject) {
 		logger.Info().Msg("------------------------------------------------------------")
 		logger.Info().Msgf("%s: %d", msg, len(files))
 		logger.Info().Msg("------------------------------------------------------------")
+		// for _, f := range files {
+		// 	logger.Info().Msgf("File %s => Date %s ", path.Join(f.Path, f.Name), f.DateTime.Format("2006-01-02"))
+		// }
+	}
+}
+
+func PrintM(ctx context.Context, msg string, files []icopy.MatchObject) {
+	logger := ctx.Value("logger").(zerolog.Logger)
+	if len(files) > 0 {
+		logger.Info().Msg("")
+		logger.Info().Msg("------------------------------------------------------------")
+		logger.Info().Msgf("%s: %d", msg, len(files))
+		logger.Info().Msg("------------------------------------------------------------")
 		for _, f := range files {
-			logger.Info().Msgf("File %s => Date %s ", path.Join(f.Path, f.Name), f.DateTime.Format("2006-01-02"))
+			logger.Info().Msgf("Source %s => Destination %s ", f.SrcFileName, f.DstFileName)
 		}
 	}
 }

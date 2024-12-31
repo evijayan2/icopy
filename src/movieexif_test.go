@@ -6,6 +6,6 @@ import (
 
 func TestReadMovieDate(t *testing.T) {
 
-	ReadVideoCreationTimeMetadata("/Users/vijay/USB/pictures/iphone/")
+	ReadVideoCreationTimeMetadata(nil, "/Users/vijay/USB/pictures/iphone/", true)
 
 }

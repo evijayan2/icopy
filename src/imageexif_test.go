@@ -3,5 +3,5 @@ package icopy
 import "testing"
 
 func TestReadJpegDate(t *testing.T) {
-	ReadJpegDate("/Users/vijay/USB/pictures/iphone")
+	ReadJpegDate(t., "/Users/vijay/USB/pictures/iphone", true)
 }

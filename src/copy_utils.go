@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	badger "github.com/dgraph-io/badger/v4"
 	"github.com/rs/zerolog"
 )
 
@@ -22,7 +23,15 @@ type FileProcessor struct {
 
 func (fp *FileProcessor) CopyImageFiles(ctx context.Context, srcdir string, destdir string) ([]FileObject, []ErroredFileObject, []FileObject) {
 	logger := ctx.Value("logger").(zerolog.Logger)
-	imagefiles, erroredfiles := ReadJpegDate(ctx, srcdir, fp.Recursive)
+
+	db, err := OpenBadgerDB("./badger")
+	if err != nil {
+		logger.Panic().Err(err).Msg("Failed to open badger db")
+	}
+
+	imagefiles, erroredfiles := ReadJpegDate(ctx, db, srcdir, fp.Recursive)
+
+	ScanAndGenerateMd5sumFiles(ctx, db, destdir, "dst")
 
 	SortFilesByDate(imagefiles)
 
@@ -34,15 +43,23 @@ func (fp *FileProcessor) CopyImageFiles(ctx context.Context, srcdir string, dest
 		}
 	}
 
-	filesCopied, erroredfiles1, skipedfiles := fp.copy_file(ctx, imagefiles, destdir)
+	filesCopied, erroredfiles1, skipedfiles := fp.copy_file(ctx, db, imagefiles, destdir)
 	erroredfiles = append(erroredfiles, erroredfiles1...)
+
+	CloseBadgerDB(db)
 
 	return filesCopied, erroredfiles, skipedfiles
 }
 
 func (fp *FileProcessor) CopyVideoFiles(ctx context.Context, srcdir string, destdir string) ([]FileObject, []ErroredFileObject, []FileObject) {
 	logger := ctx.Value("logger").(zerolog.Logger)
-	videofiles, erroredfiles := ReadVideoCreationTimeMetadata(ctx, srcdir, fp.Recursive)
+
+	db, err := OpenBadgerDB("./badger")
+	if err != nil {
+		logger.Panic().Err(err).Msg("Failed to open badger db")
+	}
+
+	videofiles, erroredfiles := ReadVideoCreationTimeMetadata(ctx, db, srcdir, fp.Recursive)
 
 	SortFilesByDate(videofiles)
 
@@ -54,13 +71,15 @@ func (fp *FileProcessor) CopyVideoFiles(ctx context.Context, srcdir string, dest
 		}
 	}
 
-	filesCopied, erroredfiles1, skipedfiles := fp.copy_file(ctx, videofiles, destdir)
+	filesCopied, erroredfiles1, skipedfiles := fp.copy_file(ctx, db, videofiles, destdir)
 	erroredfiles = append(erroredfiles, erroredfiles1...)
+
+	CloseBadgerDB(db)
 
 	return filesCopied, erroredfiles, skipedfiles
 }
 
-func (fp *FileProcessor) copy_file(ctx context.Context, imagefiles []FileObject, destdir string) ([]FileObject, []ErroredFileObject, []FileObject) {
+func (fp *FileProcessor) copy_file(ctx context.Context, db *badger.DB, imagefiles []FileObject, destdir string) ([]FileObject, []ErroredFileObject, []FileObject) {
 	logger := ctx.Value("logger").(zerolog.Logger)
 	logger.Info().Msgf("Total files expected to copy ...%d", len(imagefiles))
 
@@ -73,12 +92,17 @@ func (fp *FileProcessor) copy_file(ctx context.Context, imagefiles []FileObject,
 		tm := image.DateTime
 		fpath := path.Join(image.Path, image.Name)
 
+		value, err := GetBadgerDBValue(db, "dst-"+image.Md5Sum)
+		if (err == nil || value != "") && fp.Overwrite == "no" {
+			skipedfiles = append(skipedfiles, FileObject{Path: image.Path, Name: image.Name, DateTime: tm})
+			continue
+		}
+
 		fis, _ := os.Stat(fpath)
 
 		fd, err := os.Open(fpath) // Open the source file for reading
 		if err != nil {
 			logger.Error().Err(err).Msgf("Failed to open file: %s", fpath)
-			// panic(err)
 			erroredFiles = append(erroredFiles, ErroredFileObject{Path: image.Path, Name: image.Name, DateTime: tm, ErrorMessage: err.Error()})
 			continue
 		}

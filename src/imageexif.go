@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/rs/zerolog"
 	"github.com/rwcarlsen/goexif/exif"
 )
 
-func ReadJpegDate(ctx context.Context, src_dirname string, recursive bool) ([]FileObject, []ErroredFileObject) {
+func ReadJpegDate(ctx context.Context, db *badger.DB, src_dirname string, recursive bool) ([]FileObject, []ErroredFileObject) {
 	logger := ctx.Value("logger").(zerolog.Logger)
-	logger.Info().Msg("Reading image files")
 	de, err := os.ReadDir(src_dirname)
 	if err != nil {
 		logger.Panic().Err(err).Msg("Failed to read directory")
@@ -27,16 +27,19 @@ func ReadJpegDate(ctx context.Context, src_dirname string, recursive bool) ([]Fi
 	for _, file := range de {
 		if file.IsDir() {
 			if recursive {
-				logger.Info().Msgf("Recursively reading directory: %s", file.Name())
-				imageFiles1, erroredFiles1 := ReadJpegDate(ctx, path.Join(src_dirname, file.Name()), recursive)
+				imageFiles1, erroredFiles1 := ReadJpegDate(ctx, db, path.Join(src_dirname, file.Name()), recursive)
 				imageFiles = append(imageFiles, imageFiles1...)
 				erroredFiles = append(erroredFiles, erroredFiles1...)
 			}
 		} else {
-			logger.Info().Msgf("Reading file: %s", file.Name())
 			fpath := path.Join(src_dirname, file.Name())
 			if strings.HasSuffix(strings.ToLower(file.Name()), ".jpg") || strings.HasSuffix(strings.ToLower(file.Name()), ".jpeg") {
-				logger.Info().Msgf("Reading file: %s", file.Name())
+
+				md5sum, err := Md5Sum(fpath)
+				if err != nil {
+					logger.Panic().Err(err).Msgf("Failed to calculate md5sum for file: %s", fpath)
+				}
+				PutBadgerDB(db, "src-"+md5sum, fpath)
 
 				fd, err := os.Open(fpath) // Open the source file for reading
 				if err != nil {
@@ -46,7 +49,6 @@ func ReadJpegDate(ctx context.Context, src_dirname string, recursive bool) ([]Fi
 				x, err := exif.Decode(fd)
 				if err != nil {
 					errMsg := err.Error()
-					logger.Info().Msgf("Error: %s", errMsg)
 					if errMsg == "EOF" {
 						fi, err := os.Stat(fpath)
 						if err == nil {
@@ -67,19 +69,26 @@ func ReadJpegDate(ctx context.Context, src_dirname string, recursive bool) ([]Fi
 				} else {
 					tm, _ = x.DateTime()
 				}
-				imageFiles = append(imageFiles, FileObject{DateTime: tm, Name: file.Name(), Path: src_dirname})
+				imageFiles = append(imageFiles, FileObject{DateTime: tm, Name: file.Name(), Path: src_dirname, Md5Sum: md5sum})
 			} else if strings.HasSuffix(strings.ToLower(file.Name()), ".gif") ||
 				strings.HasSuffix(strings.ToLower(file.Name()), ".png") ||
 				strings.HasSuffix(strings.ToLower(file.Name()), ".bmp") ||
 				strings.HasSuffix(strings.ToLower(file.Name()), ".heic") {
-				logger.Info().Msgf("Reading Other file: %s", file.Name())
 
 				fi, err := os.Stat(fpath)
 				if err != nil {
 					logger.Panic().Err(err).Msgf("Failed to open file: %s", fpath)
 				}
+
+				md5sum, err := Md5Sum(fpath)
+				if err != nil {
+					logger.Panic().Err(err).Msgf("Failed to calculate md5sum for file: %s", fpath)
+				}
+
+				PutBadgerDB(db, "src-"+md5sum, fpath)
+
 				tm = fi.ModTime()
-				imageFiles = append(imageFiles, FileObject{DateTime: tm, Name: file.Name(), Path: src_dirname})
+				imageFiles = append(imageFiles, FileObject{DateTime: tm, Name: file.Name(), Path: src_dirname, Md5Sum: md5sum})
 			}
 		}
 	}

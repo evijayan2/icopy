@@ -9,6 +9,9 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	badger "github.com/dgraph-io/badger/v4"
+	"github.com/rs/zerolog"
 )
 
 // mov spec: https://developer.apple.com/standards/qtff-2001.pdf
@@ -23,8 +26,8 @@ const (
 	compressedMovieAtomType = "cmov"
 )
 
-func ReadVideoCreationTimeMetadata(ctx context.Context, src_dirname string, recursive bool) ([]FileObject, []ErroredFileObject) {
-
+func ReadVideoCreationTimeMetadata(ctx context.Context, db *badger.DB, src_dirname string, recursive bool) ([]FileObject, []ErroredFileObject) {
+	logger := ctx.Value("logger").(zerolog.Logger)
 	de, err := os.ReadDir(src_dirname)
 	if err != nil {
 		log.Println("Failed to read directory", err)
@@ -38,7 +41,7 @@ func ReadVideoCreationTimeMetadata(ctx context.Context, src_dirname string, recu
 		if file.IsDir() {
 			if recursive {
 				log.Println("Recursively reading directory:", file.Name())
-				imageFiles1, erroredFiles1 := ReadVideoCreationTimeMetadata(ctx, path.Join(src_dirname, file.Name()), recursive)
+				imageFiles1, erroredFiles1 := ReadVideoCreationTimeMetadata(ctx, db, path.Join(src_dirname, file.Name()), recursive)
 				imageFiles = append(imageFiles, imageFiles1...)
 				erroredFiles = append(erroredFiles, erroredFiles1...)
 			}
@@ -46,6 +49,12 @@ func ReadVideoCreationTimeMetadata(ctx context.Context, src_dirname string, recu
 			fpath := path.Join(src_dirname, file.Name())
 			if strings.HasSuffix(strings.ToLower(file.Name()), ".mp4") || strings.HasSuffix(strings.ToLower(file.Name()), ".mov") {
 				log.Printf("Reading file: %s", file.Name())
+
+				md5sum, err := Md5Sum(fpath)
+				if err != nil {
+					logger.Panic().Err(err).Msgf("Failed to calculate md5sum for file: %s", fpath)
+				}
+				PutBadgerDB(db, "src-"+md5sum, fpath)
 
 				videoBuffer, err := os.Open(fpath) // Open the source file for reading
 				if err != nil {
@@ -71,7 +80,7 @@ func ReadVideoCreationTimeMetadata(ctx context.Context, src_dirname string, recu
 							fi, err := os.Stat(fpath)
 							if err == nil {
 								tm := fi.ModTime()
-								imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: tm})
+								imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: tm, Md5Sum: md5sum})
 							}
 						}
 						break
@@ -116,7 +125,7 @@ func ReadVideoCreationTimeMetadata(ctx context.Context, src_dirname string, recu
 					appleEpoch := int64(binary.BigEndian.Uint32(buf[4:])) // Read creation time
 
 					tm := time.Unix(appleEpoch-appleEpochAdjustment, 0).Local()
-					imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: tm})
+					imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: tm, Md5Sum: md5sum})
 				default:
 					erroredFiles = append(erroredFiles, ErroredFileObject{
 						DateTime: time.Now(), Name: file.Name(), Path: src_dirname,
@@ -127,9 +136,16 @@ func ReadVideoCreationTimeMetadata(ctx context.Context, src_dirname string, recu
 			} else if strings.HasSuffix(strings.ToLower(file.Name()), ".wmv") ||
 				strings.HasSuffix(strings.ToLower(file.Name()), ".avi") {
 				log.Printf("Its WMV : %s", file.Name())
+
+				md5sum, err := Md5Sum(fpath)
+				if err != nil {
+					logger.Panic().Err(err).Msgf("Failed to calculate md5sum for file: %s", fpath)
+				}
+				PutBadgerDB(db, "src-"+md5sum, fpath)
+
 				fi, err := os.Stat(fpath)
 				if err == nil {
-					imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: fi.ModTime()})
+					imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: fi.ModTime(), Md5Sum: md5sum})
 				}
 			}
 		}

@@ -1,26 +1,26 @@
 # iCopy
 
-A command-line utility written in Go to scan, copy, and organize image and video files using metadata (creation date) with optional checksum generation and source cleanup.
+A command-line utility written in Go for scanning, copying, and organizing image and video files based on metadata (creation date), with optional checksum generation and source cleanup.
 
 ---
 
 ## Features
 
-* Scan directories containing images and/or videos
-* Read creation date metadata from media files
-* Organize copied files into structured directories
-* Generate MD5 checksums
-* Handle duplicates and overwrite behavior
-* Optional removal of source files after copy
+* Scan directories and generate MD5 checksums
+* Read image or video creation timestamp metadata
+* Organize copied files using configurable directory formats
 * Recursive directory traversal
+* Force copy and overwrite handling
+* Optional removal of source files after copying
+* Console logging and file logging (`custom.log`)
 
 ---
 
 ## Prerequisites
 
-* Go installed (compatible with `go.mod` in this repository)
+* Go installed (compatible with this repository)
 * macOS, Linux, or Windows
-* Basic familiarity with command-line usage
+* Terminal or shell access
 
 ---
 
@@ -49,7 +49,7 @@ go build -o icopy main.go
 
 ## Usage
 
-Run directly with Go:
+Run directly using Go:
 
 ```bash
 go run main.go [options]
@@ -63,32 +63,54 @@ Or using the compiled binary:
 
 ---
 
-## Command-Line Options
+## Command-Line Flags
 
-| Flag            | Description                                          |
-| --------------- | ---------------------------------------------------- |
-| `-in`           | Input directory containing media files               |
-| `-out`          | Output directory where files will be copied          |
-| `-image`        | Enable image metadata processing (`true/false`)      |
-| `-video`        | Enable video metadata processing (`true/false`)      |
-| `-scan`         | Scan and generate MD5 checksums only (`true/false`)  |
-| `-recursive`    | Recursively process subdirectories (`true/false`)    |
-| `-dirformat`    | Output directory format: `DATE`, `YEAR-MONTH`, `NOF` |
-| `-overwrite`    | Overwrite handling: `yes`, `no`, `ask`               |
-| `-force`        | Force copy regardless of conflicts (`true/false`)    |
-| `-removesource` | Delete source files after copy (`true/false`)        |
+The following flags are defined **exactly as implemented in `main.go`**, including defaults and behavior.
+
+| Flag            | Type   | Default | Description                                           |
+| --------------- | ------ | ------- | ----------------------------------------------------- |
+| `-scan`         | bool   | `false` | Scan files and generate MD5 checksum files only       |
+| `-video`        | bool   | `false` | Read video creation date metadata                     |
+| `-image`        | bool   | `false` | Read image creation date metadata                     |
+| `-removesource` | bool   | `false` | Remove source files after successful copy             |
+| `-dirformat`    | string | `"NOF"` | Output directory format (`DATE`, `YEAR-MONTH`, `NOF`) |
+| `-out`          | string | `"."`   | Output directory                                      |
+| `-in`           | string | `""`    | Input directory (required)                            |
+| `-recursive`    | bool   | `false` | Recursively process subdirectories                    |
+| `-force`        | bool   | `false` | Force copy of files                                   |
+| `-overwrite`    | string | `"no"`  | Overwrite existing files (`yes`, `no`, `ask`)         |
 
 ---
 
-## Directory Formats
+## Flag Behavior Notes
 
-* **DATE**: `YYYY-MM-DD/`
-* **YEAR-MONTH**: `YYYY-MM/`
-* **NOF**: No subfolder organization
+* Exactly one of `-image` or `-video` should be enabled.
+* If `-in` is not provided, the program exits with an error.
+* When `-scan=true`, files are scanned and validated but **not copied**.
+* `-force` overrides duplicate and conflict checks.
+
+---
+
+## Directory Format Options
+
+* **DATE** – Organize files as `YYYY-MM-DD/`
+* **YEAR-MONTH** – Organize files as `YYYY-MM/`
+* **NOF** – No folder organization (default)
 
 ---
 
 ## Examples
+
+### Scan and Generate MD5 Checksums
+
+```bash
+./icopy \
+  -scan=true \
+  -in=/path/to/media \
+  -out=/path/to/output
+```
+
+---
 
 ### Copy Images Organized by Year and Month
 
@@ -116,47 +138,48 @@ Or using the compiled binary:
 
 ---
 
-### Scan and Generate MD5 Checksums Only
-
-```bash
-./icopy \
-  -scan=true \
-  -in=/path/to/media \
-  -out=/path/to/output
-```
-
----
-
 ### Copy and Remove Source Files
 
 ```bash
 ./icopy \
   -image=true \
-  -video=true \
   -in=/path/to/media \
   -out=/organized \
   -recursive=true \
   -removesource=true
 ```
 
-> **Warning:** This permanently deletes original files after successful copy.
+> **Warning:** Source files are permanently deleted after a successful copy.
 
 ---
 
-## Duplicate and Overwrite Handling
+### Force Copy with Overwrite
 
-* `yes` – Always overwrite existing files
-* `no` – Skip files that already exist
-* `ask` – Prompt or apply interactive logic where applicable
+```bash
+./icopy \
+  -image=true \
+  -in=/src \
+  -out=/dest \
+  -force=true \
+  -overwrite=yes
+```
+
+---
+
+## Logging
+
+* Logs are written to the console
+* A detailed log file is created as `custom.log`
+* Errors, skipped files, and copied files are summarized
 
 ---
 
 ## Best Practices
 
-* Run without `-removesource` during initial testing
-* Keep a backup of original media
-* Use `YEAR-MONTH` for large photo libraries
-* Redirect logs to a file for auditing
+* Run with `-scan=true` before copying large datasets
+* Avoid `-removesource` until results are verified
+* Use `YEAR-MONTH` format for large photo libraries
+* Redirect output to a file for auditing
 
 ```bash
 ./icopy ...options... > icopy.log 2>&1
@@ -166,21 +189,12 @@ Or using the compiled binary:
 
 ## Typical Use Cases
 
-* Organizing phone photos and videos
-* Backing up camera media
-* Deduplicating and structuring large media libraries
-* Preparing media archives for long-term storage
-
----
-
-## Notes
-
-* Metadata availability depends on file type and source
-* Files without valid metadata may fall back to filesystem timestamps
-* All operations are controlled via flags; there is no interactive UI
+* Organizing phone or camera photos
+* Backing up large video collections
+* Cleaning and structuring legacy media archives
 
 ---
 
 ## License
 
-Refer to the repository for licensing details.
+Refer to the repository for license information.

@@ -1,63 +1,186 @@
 # iCopy
 
-iCopy is a command-line tool for scanning, copying, and managing image and video files based on their metadata.
+A command-line utility written in Go to scan, copy, and organize image and video files using metadata (creation date) with optional checksum generation and source cleanup.
+
+---
 
 ## Features
 
-- Scan directories and generate MD5 checksum files.
-- Read image and video creation date metadata.
-- Copy files to a specified output directory with various formatting options.
-- Remove source files after copying.
-- Handle errors and log activities.
+* Scan directories containing images and/or videos
+* Read creation date metadata from media files
+* Organize copied files into structured directories
+* Generate MD5 checksums
+* Handle duplicates and overwrite behavior
+* Optional removal of source files after copy
+* Recursive directory traversal
+
+---
+
+## Prerequisites
+
+* Go installed (compatible with `go.mod` in this repository)
+* macOS, Linux, or Windows
+* Basic familiarity with command-line usage
+
+---
 
 ## Installation
 
-To install the dependencies, run:
+Clone the repository:
 
-```sh
+```bash
+git clone https://github.com/evijayan2/icopy.git
+cd icopy
+```
+
+Download dependencies:
+
+```bash
 go mod tidy
 ```
 
-## Usage
-To execute the program, use the following command:
+Build the binary:
 
-```sh
+```bash
+go build -o icopy main.go
+```
+
+---
+
+## Usage
+
+Run directly with Go:
+
+```bash
 go run main.go [options]
 ```
 
-### Command Line Options
-`-scan`: Scan and generate MD5 checksum files. (true/false)
-`-video`: Read video creation date time metadata. (true/false)
-`-image`: Read image creation date time metadata. (true/false)
-`-removesource`: Remove source files after copying. (true/false)
-`-dirformat`: Output directory format. Options: DATE, YEAR-MONTH, NOF (No Format/Preserve Original)
-`-out`: Output directory.
-`-in`: Input directory.
-`-recursive`: Recursively copy files. (true/false)
-`-force`: Force copy of files. (true/false)
-`-overwrite`: Overwrite existing files. Options: yes, no, ask
+Or using the compiled binary:
 
-### Examples
-Scan and generate MD5 checksum files
-
-```sh
-go run main.go -scan=true -in=/path/to/input -out=/path/to/output
+```bash
+./icopy [options]
 ```
 
-Read image creation date metadata and copy files
+---
 
-```sh
-go run main.go -image=true -in=/path/to/input -out=/path/to/output -dirformat=YEAR-MONTH
+## Command-Line Options
+
+| Flag            | Description                                          |
+| --------------- | ---------------------------------------------------- |
+| `-in`           | Input directory containing media files               |
+| `-out`          | Output directory where files will be copied          |
+| `-image`        | Enable image metadata processing (`true/false`)      |
+| `-video`        | Enable video metadata processing (`true/false`)      |
+| `-scan`         | Scan and generate MD5 checksums only (`true/false`)  |
+| `-recursive`    | Recursively process subdirectories (`true/false`)    |
+| `-dirformat`    | Output directory format: `DATE`, `YEAR-MONTH`, `NOF` |
+| `-overwrite`    | Overwrite handling: `yes`, `no`, `ask`               |
+| `-force`        | Force copy regardless of conflicts (`true/false`)    |
+| `-removesource` | Delete source files after copy (`true/false`)        |
+
+---
+
+## Directory Formats
+
+* **DATE**: `YYYY-MM-DD/`
+* **YEAR-MONTH**: `YYYY-MM/`
+* **NOF**: No subfolder organization
+
+---
+
+## Examples
+
+### Copy Images Organized by Year and Month
+
+```bash
+./icopy \
+  -image=true \
+  -in=/path/to/photos \
+  -out=/backup/photos \
+  -dirformat=YEAR-MONTH \
+  -recursive=true
 ```
 
-Read video creation date metadata and copy files
+---
 
-```sh
-go run main.go -video=true -in=/path/to/input -out=/path/to/output -dirformat=DATE
+### Copy Videos Organized by Date
+
+```bash
+./icopy \
+  -video=true \
+  -in=/path/to/videos \
+  -out=/backup/videos \
+  -dirformat=DATE \
+  -recursive=true
 ```
 
-Remove source files after copying
+---
 
-```sh
-go run main.go -image=true -in=/path/to/input -out=/path/to/output -removesource=true
+### Scan and Generate MD5 Checksums Only
+
+```bash
+./icopy \
+  -scan=true \
+  -in=/path/to/media \
+  -out=/path/to/output
 ```
+
+---
+
+### Copy and Remove Source Files
+
+```bash
+./icopy \
+  -image=true \
+  -video=true \
+  -in=/path/to/media \
+  -out=/organized \
+  -recursive=true \
+  -removesource=true
+```
+
+> **Warning:** This permanently deletes original files after successful copy.
+
+---
+
+## Duplicate and Overwrite Handling
+
+* `yes` – Always overwrite existing files
+* `no` – Skip files that already exist
+* `ask` – Prompt or apply interactive logic where applicable
+
+---
+
+## Best Practices
+
+* Run without `-removesource` during initial testing
+* Keep a backup of original media
+* Use `YEAR-MONTH` for large photo libraries
+* Redirect logs to a file for auditing
+
+```bash
+./icopy ...options... > icopy.log 2>&1
+```
+
+---
+
+## Typical Use Cases
+
+* Organizing phone photos and videos
+* Backing up camera media
+* Deduplicating and structuring large media libraries
+* Preparing media archives for long-term storage
+
+---
+
+## Notes
+
+* Metadata availability depends on file type and source
+* Files without valid metadata may fall back to filesystem timestamps
+* All operations are controlled via flags; there is no interactive UI
+
+---
+
+## License
+
+Refer to the repository for licensing details.

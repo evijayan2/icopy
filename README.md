@@ -13,6 +13,8 @@ A command-line utility written in Go for scanning, copying, and organizing image
 * Force copy and overwrite handling
 * Optional removal of source files after copying
 * Console logging and file logging (`custom.log`)
+* **High Performance**: Partial hashing for large files and configurable concurrency
+* **Visual Feedback**: Real-time progress spinner with current file status
 
 ---
 
@@ -54,6 +56,15 @@ A command-line utility written in Go for scanning, copying, and organizing image
 ---
 
 ## Installation
+
+### Homebrew (Recommended for macOS/Linux)
+
+```bash
+brew tap evijayan2/icopy
+brew install icopy
+```
+
+### Manual Installation
 
 Clone the repository:
 
@@ -104,7 +115,7 @@ go run main.go [options]
 Or using the compiled binary:
 
 ```bash
-./icopy [options]
+icopy [options]
 ```
 
 ---
@@ -123,8 +134,10 @@ The following flags are defined **exactly as implemented in `main.go`**, includi
 | `-out`          | string | `"."`   | Output directory                                      |
 | `-in`           | string | `""`    | Input directory (required)                            |
 | `-recursive`    | bool   | `false` | Recursively process subdirectories                    |
-| `-force`        | bool   | `false` | Force copy of files                                   |
+| `-force`        | bool   | `false` | Force copy of files (overrides defaults)              |
 | `-overwrite`    | string | `"no"`  | Overwrite existing files (`yes`, `no`, `ask`)         |
+| `-workers`      | int    | `10`    | Number of parallel worker threads                     |
+| `-fast-hash`    | bool   | `true`  | Use partial hashing for large files (>50MB)           |
 
 ---
 
@@ -134,6 +147,7 @@ The following flags are defined **exactly as implemented in `main.go`**, includi
 * If `-in` is not provided, the program exits with an error.
 * When `-scan=true`, files are scanned and validated but **not copied**.
 * `-force` overrides duplicate and conflict checks.
+* `-fast-hash` significantly speeds up scanning large video files by hashing only the beginning, middle, and end.
 
 ---
 
@@ -171,7 +185,7 @@ The following flags are defined **exactly as implemented in `main.go`**, includi
 
 ---
 
-### Copy Videos Organized by Date
+### Copy Videos Organized by Date (Optimized)
 
 ```bash
 ./icopy \
@@ -179,7 +193,9 @@ The following flags are defined **exactly as implemented in `main.go`**, includi
   -in=/path/to/videos \
   -out=/backup/videos \
   -dirformat=DATE \
-  -recursive=true
+  -recursive=true \
+  -workers=20 \
+  -fast-hash=true
 ```
 
 ---

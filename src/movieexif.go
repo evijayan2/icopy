@@ -54,7 +54,10 @@ func ReadVideoCreationTimeMetadata(ctx context.Context, db *badger.DB, src_dirna
 			defer wg.Done()
 			for fpath := range jobs {
 				if options.ProgressChan != nil {
-					options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(fpath))
+					select {
+					case options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(fpath)):
+					default:
+					}
 				}
 				processVideoFile(ctx, db, fpath, videoChan, erroredChan, options.UseFastHash)
 			}

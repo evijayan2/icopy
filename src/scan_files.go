@@ -47,7 +47,10 @@ func ScanAndGenerateMd5sumFiles(ctx context.Context, db *badger.DB, dirname stri
 			defer wg.Done()
 			for path := range jobs {
 				if options.ProgressChan != nil {
-					options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(path))
+					select {
+					case options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(path)):
+					default:
+					}
 				}
 				md5sum, err := ComputeFileHash(path, options.UseFastHash)
 				if err != nil {

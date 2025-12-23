@@ -41,7 +41,10 @@ func ReadJpegDate(ctx context.Context, db *badger.DB, src_dirname string, option
 			defer wg.Done()
 			for fpath := range jobs {
 				if options.ProgressChan != nil {
-					options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(fpath))
+					select {
+					case options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(fpath)):
+					default:
+					}
 				}
 				processImageFile(ctx, db, fpath, imageChan, erroredChan, options.UseFastHash)
 			}

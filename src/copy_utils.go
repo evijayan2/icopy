@@ -122,7 +122,10 @@ func (fp *FileProcessor) copyFile(ctx context.Context, db *badger.DB, imagefiles
 			for image := range jobs {
 				if fp.ProgressChan != nil {
 					current := atomic.LoadInt64(&counter) + 1
-					fp.ProgressChan <- fmt.Sprintf("Copying (%d/%d): %s", current, len(imagefiles), image.Name)
+					select {
+					case fp.ProgressChan <- fmt.Sprintf("Copying (%d/%d): %s", current, len(imagefiles), image.Name):
+					default:
+					}
 				}
 				fp.processCopy(ctx, db, image, destdir, copyChan, errorChan, skipChan, &counter, len(imagefiles))
 			}

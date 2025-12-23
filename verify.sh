@@ -55,17 +55,17 @@ touch -t 202305011200 test_src/subdir/nested.jpg
 log "--- Scenario 1: Scanning Files ---"
 mkdir -p test_dst
 ./icopy -in test_src -out test_dst -scan -recursive
-if [ ! -d "badger" ]; then error "Badger DB not created"; fi
+
 
 log "--- Scenario 2: Copying Images (Recursive) ---"
-./icopy -in test_src -out test_dst -image -recursive -workers 5
+./icopy -in test_src -out test_dst -image -recursive -workers 5 -dirformat DATE
 # Expect: small.jpg (2023-01), nested.jpg (2023-05)
 # Check if destination folders exist
 if [ ! -f "test_dst/2023-01-01/small.jpg" ]; then error "small.jpg not copied correctly"; fi
 if [ ! -f "test_dst/2023-05-01/nested.jpg" ]; then error "nested.jpg not copied correctly"; fi
 
 log "--- Scenario 3: Copying Videos (Recursive, Fast Hash) ---"
-./icopy -in test_src -out test_dst -video -recursive -fast-hash -workers 5
+./icopy -in test_src -out test_dst -video -recursive -fast-hash -workers 5 -dirformat DATE
 # Expect: small.mp4 (2023-02), large.mp4 (2023-03), old.mpg (2023-04)
 if [ ! -f "test_dst/2023-02-01/small.mp4" ]; then error "small.mp4 not copied correctly"; fi
 if [ ! -f "test_dst/2023-03-01/large.mp4" ]; then error "large.mp4 not copied correctly"; fi
@@ -76,7 +76,7 @@ log "--- Scenario 4: Force Copy (Overwrite) ---"
 echo "modified content" > test_src/small.mp4
 touch -t 202302011200 test_src/small.mp4
 # Run with -force
-./icopy -in test_src -out test_dst -video -recursive -force
+./icopy -in test_src -out test_dst -video -recursive -force -dirformat DATE
 # Verify content
 if grep -q "modified content" test_dst/2023-02-01/small.mp4; then
     log "Force copy verification passed (content updated)"

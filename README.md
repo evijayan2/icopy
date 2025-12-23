@@ -64,6 +64,15 @@ brew tap evijayan2/icopy
 brew install icopy
 ```
 
+### Binary Download (Windows / Linux)
+
+1.  Go to the [Releases Page](https://github.com/evijayan2/icopy/releases).
+2.  Download the archive for your OS:
+    *   **Windows**: `icopy-windows-amd64.zip`
+    *   **Linux**: `icopy-linux-amd64.tar.gz`
+3.  Extract the archive.
+4.  (Optional) Move the binary to a folder in your `PATH` (e.g., `/usr/local/bin` on Linux).
+
 ### Manual Installation
 
 Clone the repository:

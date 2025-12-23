@@ -1,13 +1,13 @@
 # iCopy
 
-A command-line utility written in Go for scanning, copying, and organizing image and video files based on metadata (creation date), with optional checksum generation and source cleanup.
-
----
-
 [![Go Report Card](https://goreportcard.com/badge/github.com/evijayan2/icopy)](https://goreportcard.com/report/github.com/evijayan2/icopy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Reference](https://pkg.go.dev/badge/github.com/evijayan2/icopy.svg)](https://pkg.go.dev/github.com/evijayan2/icopy)
 [![Test](https://github.com/evijayan2/icopy/actions/workflows/test.yml/badge.svg)](https://github.com/evijayan2/icopy/actions/workflows/test.yml)
+
+A command-line utility written in Go for scanning, copying, and organizing image and video files based on metadata (creation date), with optional checksum generation and source cleanup.
+
+---
 
 ## Features
 

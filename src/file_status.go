@@ -15,7 +15,6 @@ func writeStatusFile(ctx context.Context, imagefile FileObject) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			os.Create("./.file_status.txt")
-			logger.Info().Msg("Created .file_status.txt file")
 		}
 	}
 
@@ -37,11 +36,10 @@ func checkStatusFile(ctx context.Context, imageFiles []FileObject) []FileObject 
 	_, err := os.Stat("./.file_status.txt")
 	if err != nil {
 		if os.IsNotExist(err) {
-			logger.Info().Msg("No .file_status.txt file found")
+			logger.Debug().Msg("No .file_status.txt file found")
 			return imageFiles
 		}
 	}
-	logger.Info().Msg("Found .file_status.txt file")
 
 	fd, err := os.Open("./.file_status.txt")
 	if err != nil {

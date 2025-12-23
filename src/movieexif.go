@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"log"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
@@ -26,131 +29,257 @@ const (
 	compressedMovieAtomType = "cmov"
 )
 
-func ReadVideoCreationTimeMetadata(ctx context.Context, db *badger.DB, src_dirname string, recursive bool) ([]FileObject, []ErroredFileObject) {
+func ReadVideoCreationTimeMetadata(ctx context.Context, db *badger.DB, src_dirname string, options ScanOptions) ([]FileObject, []ErroredFileObject) {
 	logger := ctx.Value("logger").(zerolog.Logger)
-	de, err := os.ReadDir(src_dirname)
-	if err != nil {
-		log.Println("Failed to read directory", err)
-		panic(err)
-	}
 
 	imageFiles := []FileObject{}
 	erroredFiles := []ErroredFileObject{}
 
-	for _, file := range de {
-		if file.IsDir() {
-			if recursive {
-				log.Println("Recursively reading directory:", file.Name())
-				imageFiles1, erroredFiles1 := ReadVideoCreationTimeMetadata(ctx, db, path.Join(src_dirname, file.Name()), recursive)
-				imageFiles = append(imageFiles, imageFiles1...)
-				erroredFiles = append(erroredFiles, erroredFiles1...)
+	// Channels for results
+	videoChan := make(chan FileObject)
+	erroredChan := make(chan ErroredFileObject)
+
+	// Worker pool
+	jobs := make(chan string)
+	var wg sync.WaitGroup
+
+	numWorkers := options.NumWorkers
+	if numWorkers <= 0 {
+		numWorkers = 10
+	}
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for fpath := range jobs {
+				if options.ProgressChan != nil {
+					options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(fpath))
+				}
+				processVideoFile(ctx, db, fpath, videoChan, erroredChan, options.UseFastHash)
 			}
-		} else {
-			fpath := path.Join(src_dirname, file.Name())
-			if strings.HasSuffix(strings.ToLower(file.Name()), ".mp4") || strings.HasSuffix(strings.ToLower(file.Name()), ".mov") {
-				log.Printf("Reading file: %s", file.Name())
+		}()
+	}
 
-				md5sum, err := Md5Sum(fpath)
-				if err != nil {
-					logger.Panic().Err(err).Msgf("Failed to calculate md5sum for file: %s", fpath)
-				}
-				PutBadgerDB(db, "src-"+md5sum, fpath)
-
-				videoBuffer, err := os.Open(fpath) // Open the source file for reading
-				if err != nil {
-					panic(err)
-				}
-				defer videoBuffer.Close()
-
-				buf := make([]byte, 8)
-				failed := false
-
-				// Traverse videoBuffer to find movieResourceAtom
-				for {
-					// bytes 1-4 is atom size, 5-8 is type
-					// Read atom
-					if _, err := videoBuffer.Read(buf); err != nil {
-						erroredFiles = append(erroredFiles, ErroredFileObject{
-							DateTime: time.Now(), Name: file.Name(), Path: src_dirname,
-							ErrorMessage: err.Error(),
-						})
-						failed = true
-
-						if err.Error() == "EOF" {
-							fi, err := os.Stat(fpath)
-							if err == nil {
-								tm := fi.ModTime()
-								imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: tm, Md5Sum: md5sum})
-							}
-						}
-						break
-					}
-
-					if bytes.Equal(buf[4:8], []byte(movieResourceAtomType)) {
-						break // found it!
-					}
-
-					atomSize := binary.BigEndian.Uint32(buf) // check size of atom
-					videoBuffer.Seek(int64(atomSize)-8, 1)   // jump over data and set seeker at beginning of next atom
-				}
-
-				if failed {
-					continue
-				}
-
-				// read next atom
-				if _, err := videoBuffer.Read(buf); err != nil {
-					erroredFiles = append(erroredFiles, ErroredFileObject{
-						DateTime: time.Now(), Name: file.Name(), Path: src_dirname,
-						ErrorMessage: err.Error(),
-					})
-					log.Println("Error reading movie atom: ", err)
-					continue
-				}
-
-				atomType := string(buf[4:8]) // skip size and read type
-				switch atomType {
-				case movieHeaderAtomType:
-					// read next atom
-					if _, err := videoBuffer.Read(buf); err != nil {
-						erroredFiles = append(erroredFiles, ErroredFileObject{
-							DateTime: time.Now(), Name: file.Name(), Path: src_dirname,
-							ErrorMessage: err.Error(),
-						})
-						log.Println("Error reading movie header type: ", err)
-						continue
-					}
-
-					// byte 1 is version, byte 2-4 is flags, 5-8 Creation time
-					appleEpoch := int64(binary.BigEndian.Uint32(buf[4:])) // Read creation time
-
-					tm := time.Unix(appleEpoch-appleEpochAdjustment, 0).Local()
-					imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: tm, Md5Sum: md5sum})
-				default:
-					erroredFiles = append(erroredFiles, ErroredFileObject{
-						DateTime: time.Now(), Name: file.Name(), Path: src_dirname,
-						ErrorMessage: atomType + " is not a valid atom type",
-					})
-					log.Println("Error reading movie header all: ", err)
-				}
-			} else if strings.HasSuffix(strings.ToLower(file.Name()), ".wmv") ||
-				strings.HasSuffix(strings.ToLower(file.Name()), ".avi") {
-				log.Printf("Its WMV : %s", file.Name())
-
-				md5sum, err := Md5Sum(fpath)
-				if err != nil {
-					logger.Panic().Err(err).Msgf("Failed to calculate md5sum for file: %s", fpath)
-				}
-				PutBadgerDB(db, "src-"+md5sum, fpath)
-
-				fi, err := os.Stat(fpath)
-				if err == nil {
-					imageFiles = append(imageFiles, FileObject{Name: file.Name(), Path: src_dirname, DateTime: fi.ModTime(), Md5Sum: md5sum})
-				}
+	// Result collector
+	done := make(chan struct{})
+	collectorDone := make(chan struct{})
+	go func() {
+		defer close(collectorDone)
+		for {
+			select {
+			case img := <-videoChan:
+				imageFiles = append(imageFiles, img)
+			case errFile := <-erroredChan:
+				erroredFiles = append(erroredFiles, errFile)
+			case <-done:
+				return
 			}
 		}
+	}()
+
+	err := filepath.WalkDir(src_dirname, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			logger.Error().Err(err).Msgf("Error walking path: %s", path)
+			return nil
+		}
+		if d.IsDir() {
+			if path != src_dirname && !options.Recursive {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		lowerName := strings.ToLower(d.Name())
+		if strings.HasSuffix(lowerName, ".mp4") || strings.HasSuffix(lowerName, ".mov") ||
+			strings.HasSuffix(lowerName, ".wmv") || strings.HasSuffix(lowerName, ".avi") ||
+			strings.HasSuffix(lowerName, ".mpg") || strings.HasSuffix(lowerName, ".3gp") ||
+			strings.HasSuffix(lowerName, ".m4v") || strings.HasSuffix(lowerName, ".mkv") ||
+			strings.HasSuffix(lowerName, ".webm") || strings.HasSuffix(lowerName, ".flv") ||
+			strings.HasSuffix(lowerName, ".ts") || strings.HasSuffix(lowerName, ".mts") ||
+			strings.HasSuffix(lowerName, ".m2ts") || strings.HasSuffix(lowerName, ".vob") ||
+			strings.HasSuffix(lowerName, ".ogg") || strings.HasSuffix(lowerName, ".qt") ||
+			strings.HasSuffix(lowerName, ".yuv") || strings.HasSuffix(lowerName, ".rm") ||
+			strings.HasSuffix(lowerName, ".rmvb") || strings.HasSuffix(lowerName, ".viv") ||
+			strings.HasSuffix(lowerName, ".asf") || strings.HasSuffix(lowerName, ".amv") ||
+			strings.HasSuffix(lowerName, ".svi") || strings.HasSuffix(lowerName, ".3g2") ||
+			strings.HasSuffix(lowerName, ".mxf") || strings.HasSuffix(lowerName, ".roq") ||
+			strings.HasSuffix(lowerName, ".nsv") || strings.HasSuffix(lowerName, ".f4v") ||
+			strings.HasSuffix(lowerName, ".f4p") || strings.HasSuffix(lowerName, ".f4a") ||
+			strings.HasSuffix(lowerName, ".f4b") {
+			jobs <- path
+		}
+		return nil
+	})
+
+	if err != nil {
+		logger.Error().Err(err).Msg("Error walking directory")
 	}
+
+	close(jobs)
+	wg.Wait()
+	close(done)
+	<-collectorDone
+
+	close(videoChan)
+	close(erroredChan)
+
 	return imageFiles, erroredFiles
+}
+
+func processVideoFile(ctx context.Context, db *badger.DB, fpath string, videoChan chan<- FileObject, erroredChan chan<- ErroredFileObject, useFastHash bool) {
+	logger := ctx.Value("logger").(zerolog.Logger)
+	fileName := filepath.Base(fpath)
+
+	md5sum, err := ComputeFileHash(fpath, useFastHash)
+	if err != nil {
+		logger.Error().Err(err).Msgf("Failed to calculate md5sum for file: %s", fpath)
+		return
+	}
+	PutBadgerDB(db, "src-"+md5sum, fpath)
+
+	lowerName := strings.ToLower(fileName)
+
+	if strings.HasSuffix(lowerName, ".mp4") || strings.HasSuffix(lowerName, ".mov") ||
+		strings.HasSuffix(lowerName, ".3gp") || strings.HasSuffix(lowerName, ".m4v") ||
+		strings.HasSuffix(lowerName, ".qt") || strings.HasSuffix(lowerName, ".3g2") ||
+		strings.HasSuffix(lowerName, ".f4v") || strings.HasSuffix(lowerName, ".f4p") ||
+		strings.HasSuffix(lowerName, ".f4a") || strings.HasSuffix(lowerName, ".f4b") {
+		// log.Printf("Reading file: %s", fileName)
+		processMp4Mov(ctx, fpath, fileName, md5sum, videoChan, erroredChan)
+	} else if strings.HasSuffix(lowerName, ".mpg") || strings.HasSuffix(lowerName, ".vob") {
+		processMpg(ctx, fpath, fileName, md5sum, videoChan, erroredChan)
+	} else if strings.HasSuffix(lowerName, ".wmv") || strings.HasSuffix(lowerName, ".avi") ||
+		strings.HasSuffix(lowerName, ".mkv") || strings.HasSuffix(lowerName, ".webm") ||
+		strings.HasSuffix(lowerName, ".flv") || strings.HasSuffix(lowerName, ".ts") ||
+		strings.HasSuffix(lowerName, ".mts") || strings.HasSuffix(lowerName, ".m2ts") ||
+		strings.HasSuffix(lowerName, ".ogg") || strings.HasSuffix(lowerName, ".yuv") ||
+		strings.HasSuffix(lowerName, ".rm") || strings.HasSuffix(lowerName, ".rmvb") ||
+		strings.HasSuffix(lowerName, ".viv") || strings.HasSuffix(lowerName, ".asf") ||
+		strings.HasSuffix(lowerName, ".amv") || strings.HasSuffix(lowerName, ".svi") ||
+		strings.HasSuffix(lowerName, ".mxf") || strings.HasSuffix(lowerName, ".roq") ||
+		strings.HasSuffix(lowerName, ".nsv") {
+		// log.Printf("Its WMV/AVI/MKV... : %s", fileName)
+		fi, err := os.Stat(fpath)
+		if err == nil {
+			videoChan <- FileObject{Name: fileName, Path: filepath.Dir(fpath), DateTime: fi.ModTime(), Md5Sum: md5sum}
+		}
+	}
+}
+
+func processMp4Mov(ctx context.Context, fpath string, fileName string, md5sum string, videoChan chan<- FileObject, erroredChan chan<- ErroredFileObject) {
+	videoBuffer, err := os.Open(fpath)
+	if err != nil {
+		erroredChan <- ErroredFileObject{
+			DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+			ErrorMessage: err.Error(),
+		}
+		return
+	}
+	defer videoBuffer.Close()
+
+	buf := make([]byte, 8)
+
+	// Traverse videoBuffer to find movieResourceAtom
+	for {
+		if _, err := videoBuffer.Read(buf); err != nil {
+			if err.Error() == "EOF" {
+				fi, err := os.Stat(fpath)
+				if err == nil {
+					videoChan <- FileObject{Name: fileName, Path: filepath.Dir(fpath), DateTime: fi.ModTime(), Md5Sum: md5sum}
+				}
+			} else {
+				erroredChan <- ErroredFileObject{
+					DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+					ErrorMessage: err.Error(),
+				}
+			}
+			return
+		}
+
+		if bytes.Equal(buf[4:8], []byte(movieResourceAtomType)) {
+			break // found it!
+		}
+
+		atomSize := binary.BigEndian.Uint32(buf)
+		videoBuffer.Seek(int64(atomSize)-8, 1)
+	}
+
+	// read next atom
+	if _, err := videoBuffer.Read(buf); err != nil {
+		erroredChan <- ErroredFileObject{
+			DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+			ErrorMessage: err.Error(),
+		}
+		return
+	}
+
+	atomType := string(buf[4:8])
+	switch atomType {
+	case movieHeaderAtomType:
+		if _, err := videoBuffer.Read(buf); err != nil {
+			erroredChan <- ErroredFileObject{
+				DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+				ErrorMessage: err.Error(),
+			}
+			return
+		}
+		appleEpoch := int64(binary.BigEndian.Uint32(buf[4:]))
+		tm := time.Unix(appleEpoch-appleEpochAdjustment, 0).Local()
+		videoChan <- FileObject{Name: fileName, Path: filepath.Dir(fpath), DateTime: tm, Md5Sum: md5sum}
+	default:
+		erroredChan <- ErroredFileObject{
+			DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+			ErrorMessage: atomType + " is not a valid atom type",
+		}
+	}
+}
+
+func processMpg(ctx context.Context, fpath string, fileName string, md5sum string, videoChan chan<- FileObject, erroredChan chan<- ErroredFileObject) {
+	videoBuffer, err := os.Open(fpath)
+	if err != nil {
+		erroredChan <- ErroredFileObject{
+			DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+			ErrorMessage: err.Error(),
+		}
+		return
+	}
+	defer videoBuffer.Close()
+
+	// Read first 4 bytes for Pack Header Start Code 0x000001BA
+	buf := make([]byte, 4)
+	if _, err := videoBuffer.Read(buf); err != nil {
+		if err == io.EOF {
+			fi, err := os.Stat(fpath)
+			if err == nil {
+				videoChan <- FileObject{Name: fileName, Path: filepath.Dir(fpath), DateTime: fi.ModTime(), Md5Sum: md5sum}
+			} else {
+				erroredChan <- ErroredFileObject{
+					DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+					ErrorMessage: err.Error(),
+				}
+			}
+		} else {
+			erroredChan <- ErroredFileObject{
+				DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+				ErrorMessage: err.Error(),
+			}
+		}
+		return
+	}
+
+	// 00 00 01 BA
+	if bytes.Equal(buf, []byte{0x00, 0x00, 0x01, 0xBA}) {
+		fi, err := os.Stat(fpath)
+		if err == nil {
+			videoChan <- FileObject{Name: fileName, Path: filepath.Dir(fpath), DateTime: fi.ModTime(), Md5Sum: md5sum}
+		}
+	} else {
+		erroredChan <- ErroredFileObject{
+			DateTime: time.Now(), Name: fileName, Path: filepath.Dir(fpath),
+			ErrorMessage: "Invalid MPG file header",
+		}
+	}
 }
 
 // files, err := ioutil.ReadDir(src_dirname)

@@ -3,8 +3,9 @@ package icopy
 import (
 	"context"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
+	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rs/zerolog"
@@ -15,33 +16,67 @@ type MatchObject struct {
 	DstFileName string `json:"dst_file_name"`
 }
 
-func ScanFiles(ctx context.Context, src_dirname string, dst_dirname string) {
+func ScanFiles(ctx context.Context, src_dirname string, dst_dirname string, options ScanOptions) {
 	logger := ctx.Value("logger").(zerolog.Logger)
 	db, err := OpenBadgerDB("./badger")
 	if err != nil {
 		logger.Panic().Err(err).Msg("Failed to open badger db")
 	}
 
-	ScanAndGenerateMd5sumFiles(ctx, db, src_dirname, "src")
-	ScanAndGenerateMd5sumFiles(ctx, db, dst_dirname, "dst")
+	ScanAndGenerateMd5sumFiles(ctx, db, src_dirname, "src", options)
+	ScanAndGenerateMd5sumFiles(ctx, db, dst_dirname, "dst", options)
 
 	CloseBadgerDB(db)
 }
 
-func ScanAndGenerateMd5sumFiles(ctx context.Context, db *badger.DB, dirname string, prefix string) {
-	// logger := ctx.Value("logger").(zerolog.Logger)
+func ScanAndGenerateMd5sumFiles(ctx context.Context, db *badger.DB, dirname string, prefix string, options ScanOptions) {
+	logger := ctx.Value("logger").(zerolog.Logger)
 
-	filepath.Walk(dirname, func(path string, info os.FileInfo, err error) error {
+	jobs := make(chan string)
+	var wg sync.WaitGroup
+
+	numWorkers := options.NumWorkers
+	if numWorkers <= 0 {
+		numWorkers = 10
+	}
+
+	// Start workers
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				if options.ProgressChan != nil {
+					options.ProgressChan <- fmt.Sprintf("Scanning: %s", filepath.Base(path))
+				}
+				md5sum, err := ComputeFileHash(path, options.UseFastHash)
+				if err != nil {
+					logger.Error().Err(err).Msgf("Failed to calculate md5sum for file: %s", path)
+					continue
+				}
+				PutBadgerDB(db, prefix+"-"+md5sum, path)
+			}
+		}()
+	}
+
+	// Walk directory and send jobs
+	err := filepath.WalkDir(dirname, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			// logger.Panic().Err(err).Msg("Failed to walk directory")
+			logger.Error().Err(err).Msgf("Error walking path: %s", path)
 			return nil
 		}
-		if !info.IsDir() {
-			md5sum, _ := Md5Sum(path)
-			PutBadgerDB(db, prefix+"-"+md5sum, path)
+		if !d.IsDir() {
+			jobs <- path
 		}
 		return nil
 	})
+
+	if err != nil {
+		logger.Error().Err(err).Msg("Error walking directory")
+	}
+
+	close(jobs)
+	wg.Wait()
 }
 
 func ValidateMd5sumFiles(ctx context.Context, src_prefix string, dst_prefix string) []MatchObject {

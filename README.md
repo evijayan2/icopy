@@ -16,6 +16,35 @@ A command-line utility written in Go for scanning, copying, and organizing image
 
 ---
 
+## Supported Formats
+
+### Video Formats
+
+| Format | Processing Method | Description |
+| :--- | :--- | :--- |
+| `mp4`, `mov`, `m4v`, `3gp` | Metadata Parsing | Extracts creation date from atoms/boxes (e.g., `mvhd`). |
+| `qt`, `3g2`, `f4v`, `f4p`, `f4a`, `f4b` | Metadata Parsing | Extracts creation date from atoms/boxes. |
+| `mpg`, `vob` | Header Parsing | Extracts timestamp from MPEG Program Stream packs. |
+| `wmv`, `avi`, `mkv`, `webm` | File Modification Time | Uses filesystem `ModTime` as a fallback. |
+| `flv`, `ts`, `mts`, `m2ts` | File Modification Time | Uses filesystem `ModTime` as a fallback. |
+| `ogg`, `yuv`, `rm`, `rmvb`, `viv` | File Modification Time | Uses filesystem `ModTime` as a fallback. |
+| `asf`, `amv`, `svi`, `mxf` | File Modification Time | Uses filesystem `ModTime` as a fallback. |
+| `roq`, `nsv` | File Modification Time | Uses filesystem `ModTime` as a fallback. |
+
+### Image Formats
+
+| Format | Processing Method | Description |
+| :--- | :--- | :--- |
+| `jpg`, `jpeg` | EXIF Parsing | Extracts Date/Time Original from EXIF data. |
+| `tiff`, `tif` | EXIF Parsing | Extracts creation date from TIFF metadata. |
+| `cr2`, `nef`, `arw`, `dng`, `orf`, `rw2`, `raf` | EXIF Parsing | Attempts to parse embedded EXIF; falls back to ModTime if failed. |
+| `png`, `gif`, `bmp` | File Modification Time | Uses filesystem `ModTime` as a fallback. |
+| `heic` | EXIF Parsing | Extracts EXIF from ISOBMFF metadata box. |
+| `webp`, `svg`, `psd`, `ai` | File Modification Time | Uses filesystem `ModTime` as a fallback. |
+| `cr3` | File Modification Time | Uses fallback (CR3 structure is complex/ISOBMFF). |
+
+---
+
 ## Prerequisites
 
 * Go installed (compatible with this repository)
@@ -38,12 +67,29 @@ Download dependencies:
 ```bash
 go mod tidy
 ```
+## Build
 
-Build the binary:
+To build the project locally, run:
 
 ```bash
-go build -o icopy main.go
+make build
 ```
+
+To verify the installation:
+
+```bash
+make verify
+```
+
+## Release
+
+To create release binaries manually:
+
+```bash
+make release
+```
+
+Binaries will be available in the `build/` directory.
 
 ---
 

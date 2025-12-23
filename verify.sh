@@ -43,7 +43,7 @@ touch -t 202303011200 test_src/large.mp4
 
 # 4. Create MPG Video - Should be copied by -video (fallback to mod time)
 log "Generating old.mpg..."
-echo "fake mpg content" > test_src/old.mpg
+printf "\x00\x00\x01\xBAfake mpg content" > test_src/old.mpg
 touch -t 202304011200 test_src/old.mpg
 
 # 5. Create Nested File - Should be found by recursive scan

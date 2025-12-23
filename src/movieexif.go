@@ -205,6 +205,15 @@ func processMp4Mov(ctx context.Context, fpath string, fileName string, md5sum st
 		}
 
 		atomSize := binary.BigEndian.Uint32(buf)
+		if atomSize < 8 {
+			// Invalid atom size or extended size (1) or EOF (0) which we don't support fully here.
+			// Just fallback to file time if we can't parse structure.
+			fi, err := os.Stat(fpath)
+			if err == nil {
+				videoChan <- FileObject{Name: fileName, Path: filepath.Dir(fpath), DateTime: fi.ModTime(), Md5Sum: md5sum}
+			}
+			return
+		}
 		videoBuffer.Seek(int64(atomSize)-8, 1)
 	}
 
